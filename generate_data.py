@@ -31,7 +31,7 @@ amino_acids = [
     "V",
 ]
 
-index = ["rt", "gravy", "mw", "arom", "ip", "charge", "length"] + list(amino_acids)
+index = ["gravy", "mw", "arom", "ip", "length"] + list(amino_acids)
 
 
 def remove_unimod(peptide_sequence: str):
@@ -58,15 +58,9 @@ def generate_pair_matrix(data: pd.DataFrame, design: pd.DataFrame, topn : int = 
                 continue
 
             if topn:
-                protein_data = protein_data.sort_values(sample, ascending=False)
+                protein_data = protein_data.sort_values(sample, ascending=False)[0:topn]
 
-            peptides = protein_data["Precursor"].tolist()
-
-            rts = protein_data["RetentionTime"].tolist()
-            rts = {peptide: rt for peptide, rt in zip(peptides, rts)}
-
-            charges = protein_data["Charge"].tolist()
-            charges = {peptide: charge for peptide, charge in zip(peptides, charges)}
+            peptides = protein_data["PeptideSequence"].tolist()
 
             peptide_pairs = get_pairs(peptides)
 
@@ -74,14 +68,14 @@ def generate_pair_matrix(data: pd.DataFrame, design: pd.DataFrame, topn : int = 
 
                 a, b = ab
 
-                a_feat = generate_peptide_feature_vector(a, rts[a], charges[a])
-                b_feat = generate_peptide_feature_vector(b, rts[b], charges[b])
+                a_feat = generate_peptide_feature_vector(a)
+                b_feat = generate_peptide_feature_vector(b)
 
-                a_int = protein_data.set_index("Precursor").loc[a, sample]
-                b_int = protein_data.set_index("Precursor").loc[b, sample]
+                a_int = protein_data.set_index("PeptideSequence").loc[a, sample]
+                b_int = protein_data.set_index("PeptideSequence").loc[b, sample]
 
                 feat_diff = np.array(a_feat) - np.array(b_feat)
-                int_diff = np.log2(a_int) / np.log2(b_int)
+                int_diff = np.sum(np.log2(a_int)) / np.sum(np.log2(b_int))
 
                 feat_id = f"{sample}_{protein}_{a}_{b}"
 
@@ -91,7 +85,7 @@ def generate_pair_matrix(data: pd.DataFrame, design: pd.DataFrame, topn : int = 
         return pd.DataFrame(X, index=index).T, pd.Series(y)
 
 
-def generate_peptide_feature_vector(peptide: str, rt: float, charge: float):
+def generate_peptide_feature_vector(peptide: str):
     peptide = remove_unimod(peptide)
     analyzed_seq = ProteinAnalysis(peptide)
     gravy = analyzed_seq.gravy()
@@ -101,12 +95,10 @@ def generate_peptide_feature_vector(peptide: str, rt: float, charge: float):
     isoelectric_point = analyzed_seq.isoelectric_point()
     length = len(peptide)
     feature_vector = [
-        rt,
         gravy,
         molecular_weight,
         aromaticity,
         isoelectric_point,
-        charge,
         length,
     ]
     feature_vector += [amino_acids_percent[aa] for aa in amino_acids]
