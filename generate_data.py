@@ -2,10 +2,26 @@ import pandas as pd
 import numpy as np
 import re
 from itertools import combinations
-
+from dpks import QuantMatrix
 
 
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
+
+
+def preprocess(data, design):
+    data["PeptideSequence"] = data["PeptideSequence"] + ";" + data["Protein"]
+    data = (
+        QuantMatrix(data, design)
+        .quantify(
+            method="top_n", top_n=6, summarization_method="sum", level="PeptideSequence"
+        )
+        .to_df()
+        .replace(0, np.nan)
+    )
+    data[["PeptideSequence", "Protein"]] = data["PeptideSequence"].str.split(
+        ";", expand=True
+    )
+    return data, design
 
 
 amino_acids = [
@@ -33,6 +49,7 @@ amino_acids = [
 
 index = ["gravy", "mw", "arom", "ip", "length"] + list(amino_acids)
 
+total_index = [f"{i}_1" for i in index] + [f"{i}_2" for i in index]
 
 def remove_unimod(peptide_sequence: str):
     peptide_sequence = re.sub(r"\(UniMod:\d+\)", "", peptide_sequence)
@@ -40,7 +57,7 @@ def remove_unimod(peptide_sequence: str):
     return peptide_sequence
 
 
-def generate_pair_matrix(data: pd.DataFrame, design: pd.DataFrame, topn : int = None):
+def generate_pair_matrix(data: pd.DataFrame, design: pd.DataFrame, topn: int = None):
 
     samples = design["sample"]
     proteins = data["Protein"].unique()
@@ -74,7 +91,7 @@ def generate_pair_matrix(data: pd.DataFrame, design: pd.DataFrame, topn : int = 
                 a_int = protein_data.set_index("PeptideSequence").loc[a, sample]
                 b_int = protein_data.set_index("PeptideSequence").loc[b, sample]
 
-                feat_diff = np.array(a_feat) - np.array(b_feat)
+                feat_diff = np.array(a_feat + b_feat)
                 int_diff = np.sum(np.log2(a_int)) / np.sum(np.log2(b_int))
 
                 feat_id = f"{sample}_{protein}_{a}_{b}"
@@ -82,7 +99,7 @@ def generate_pair_matrix(data: pd.DataFrame, design: pd.DataFrame, topn : int = 
                 X[feat_id] = feat_diff
                 y[feat_id] = int_diff
 
-        return pd.DataFrame(X, index=index).T, pd.Series(y)
+        return pd.DataFrame(X, index=total_index).T, pd.Series(y)
 
 
 def generate_peptide_feature_vector(peptide: str):
@@ -105,5 +122,5 @@ def generate_peptide_feature_vector(peptide: str):
     return feature_vector
 
 
-def get_pairs(objects : list):
+def get_pairs(objects: list):
     return list(combinations(objects, 2))
