@@ -4,26 +4,19 @@ import re
 from itertools import combinations
 from dpks import QuantMatrix
 
-
-from Bio.SeqUtils.ProtParam import ProteinAnalysis
-
-
 class FeatureGenerator:
+    """
+    Positional encoding
+    
+    """
 
     def __init__(self, remove_unimod : bool = False) -> None:
-        self.index_no_unimod = ["gravy", "mw", "arom", "ip", "length"] + list(
-            amino_acids
-        )
         self.remove_unimod = remove_unimod
         self.datasets = []
 
     def add_dataset(self, data: pd.DataFrame, design: pd.DataFrame):
         data, design = self.preprocess(data, design, self.remove_unimod)
         self.datasets.append((data, design))
-        self.unique_unimods = get_unique_unimods(data, "PeptideSequence")
-        index = self.index_no_unimod + [unimod for unimod in self.unique_unimods]
-        self.total_index = [f"{i}_1" for i in index] + [f"{i}_2" for i in index]
-        print(self.unique_unimods)
 
     def generate_pair_matrix(self, topn: int = None):
         Xs = []
@@ -66,47 +59,32 @@ class FeatureGenerator:
 
                         a, b = ab
 
-                        a_feat = self.generate_peptide_feature_vector(a)
-                        b_feat = self.generate_peptide_feature_vector(b)
+                        a_feat = create_positional_matrix(a)
+                        b_feat = create_positional_matrix(b)
 
                         a_int = protein_data.set_index("PeptideSequence").loc[a, sample]
                         b_int = protein_data.set_index("PeptideSequence").loc[b, sample]
 
-                        feat_diff = np.array(a_feat + b_feat)
-                        int_diff = np.log2(a_int) / np.log2(b_int)
+                        feature_vector = flatten_and_concatenate([a_feat, b_feat])
+                        int_diff = np.sum(np.log2(a_int)) / np.sum(np.log2(b_int))
 
                         feat_id = f"{sample}_{protein}_{a}_{b}"
 
-                        X[feat_id] = feat_diff
+                        X[feat_id] = feature_vector
                         y[feat_id] = int_diff
+
                 break # Here for speed. Only 1 sample for now.
-            Xs.append(pd.DataFrame(X, index=self.total_index).T)
+
+            Xs.append(pd.DataFrame(X, index=get_index()).T)
             ys.append(pd.Series(y))
             dataset_index += 1
+
         print("Concatenating")
         X = pd.concat(Xs)
         y = pd.concat(ys)
         return X, y
 
-    def generate_peptide_feature_vector(self, peptide: str):
-        peptide_no_unimod = remove_unimod(peptide)
-        analyzed_seq = ProteinAnalysis(peptide_no_unimod)
-        gravy = analyzed_seq.gravy()
-        molecular_weight = analyzed_seq.molecular_weight()
-        amino_acids_percent = analyzed_seq.get_amino_acids_percent()
-        aromaticity = analyzed_seq.aromaticity()
-        isoelectric_point = analyzed_seq.isoelectric_point()
-        length = len(peptide_no_unimod)
-        feature_vector = [
-            gravy,
-            molecular_weight,
-            aromaticity,
-            isoelectric_point,
-            length,
-        ]
-        feature_vector += [amino_acids_percent[aa] for aa in amino_acids]
-        feature_vector += self.count_unimods(peptide)
-        return feature_vector
+    
 
     def preprocess(self, data, design, remove_mod=True):
         data["PeptideSequence"] = data["PeptideSequence"] + ";" + data["Protein"]
@@ -147,18 +125,40 @@ def get_unique_unimods(df: pd.DataFrame, column_name: str):
 
     return list(unique_unimods)
 
-
-
-
-
 def remove_unimod(peptide_sequence: str):
     peptide_sequence = re.sub(r"\(UniMod:\d+\)", "", peptide_sequence)
     peptide_sequence = re.sub(r"\(\d+\)", "", peptide_sequence)
     return peptide_sequence
 
 
+def normalize_sequence(sequence):
+    max_length = 50
+    return sequence.ljust(max_length, 'X')[:max_length]
+
+
+def create_positional_matrix(sequence):
+    sequence = remove_unimod(sequence)
+    normalized_seq = normalize_sequence(sequence)
+    matrix = np.zeros((len(normalized_seq), len(amino_acids)))
+    for pos, aa in enumerate(normalized_seq):
+        matrix[pos, amino_acid_index[aa]] += 1
+    return matrix
+
+
+def flatten_and_concatenate(matrices):
+    vectors = [matrix.flatten() for matrix in matrices]
+    return np.hstack(vectors)
+
+def get_index():
+    index = []
+    for pos in range(50):
+        for aa in amino_acids:
+            index.append(f"{pos}_{aa}")
+    return [i + "_1" for i in index] + [i + "_2" for i in index] 
+
 def get_pairs(objects: list):
     return list(combinations(objects, 2))
+
 
 
 amino_acids = [
@@ -182,4 +182,6 @@ amino_acids = [
     "W",
     "Y",
     "V",
+    "X"
 ]
+amino_acid_index = {aa: idx for idx, aa in enumerate(amino_acids)}
